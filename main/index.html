@@ -2,9 +2,208 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Cool Page</title>
+    <title>Fraktivitaeten Manager</title>
 </head>
 <body>
-    <h1>Cool Page</h1>
+<h1>Fraktivitaeten Manager</h1>
+
+<div id="Fraktivitaet-Anzeige">
+    <h2> Momentane Verteilung:</h2>
+    <div id="FraktivitaetenTimeline" hidden></div>
+    <div id="FraktivitaetenNotFound">
+        Die Fraktivitaetenverteilung wurde nicht gefunden
+    </div>
+</div>
+
+<div id="Fraktivitaeten hinzufügen">
+    <div>
+        <div><input type="radio" id="Fix"></div> <div><input type="radio" id="NotFix"></div>
+    </div>
+    <h2> Gib die Daten der Fraktivitaet an:</h2>
+    <div id="FraktivitaetUnknown">
+        <form action="/verteilung">
+            <table>
+                <tr>
+                    <td><label for="FraktivitaetName"> <b>Name:</b></label></td>
+                    <td><input type="text" id="FraktivitaetName" name="FraktivitaetName" placeholder="Name der Fraktivitaet" required></td>
+                </tr>
+                <tr>
+                    <td><label for="FraktivitaetZeit"> <b>Dauer:</b></label></td>
+                    <td><input type="text" id = FraktivitaetZeit" name="FraktivitaetZeit" placeholder="Dauer der Fraktivitaet in Minuten" required></td>
+                </tr>
+                <tr>
+                    <td> <label for="Teilnehmer"><b>Teilnehmer:</b></label></td>
+                    <td id="Teilnehmer" style="display: inline-table; justify-content: space-between">Keine Teilnehmer zur Auswahl </td>
+                </tr>
+                <tr>
+                    <td><label for="Raum"><b>Raum:</b></label></td>
+                    <td id="Raum" style="display: inline-table; justify-content: space-between"> keine Raumauswahl</td>
+                </tr>
+                <tr>
+
+                </tr>
+            </table>
+
+            <input type="submit" value="Submit">
+        </form>
+    </div>
+    <div id="FraktivitaetFix">
+        <form action="/verteilungFix">
+            <table>
+                <tr>
+                    <td><label for="FraktivitaetNameFix"> <b>Name:</b></label></td>
+                    <td><input type="text" id="FraktivitaetNameFix" name="FraktivitaetName" placeholder="Name der Fraktivitaet" required></td>
+                </tr>
+                <tr>
+                    <td><label for="FraktivitaetZeitFix"> <b>Dauer:</b></label></td>
+                    <td><input type="text" id="FraktivitaetDauerFix" name="FraktivitaetDauer" placeholder="Dauer der Fraktivitaet in Minuten" required></td>
+                </tr>
+                <tr>
+                    <td> <label for="TeilnehmerFix"><b>Teilnehmer:</b></label></td>
+                    <td id="TeilnehmerFix" style="display: inline-table; justify-content: space-between">Keine Teilnehmer zur Auswahl </td>
+                </tr>
+                <tr>
+                    <td><label for="RaumFix"><b>Raum:</b></label></td>
+                    <td id="RaumFix" style="display: inline-table; justify-content: space-between"> keine Raumauswahl</td>
+                </tr>
+                <tr>
+                    <td><label for="FraktivitaetZeitFix">Zeitpunkt:</label></td>
+                    <td><input type="text" id="FraktivitaetZeitFix" name="FraktivitaetZeit" placeholder="Zeitpunkt der Fraktivitaet" required></td>
+                </tr>
+            </table>
+
+            <input type="submit" value="Submit">
+        </form>
+    </div>
+</div>
 </body>
+<script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
+
+<script type="text/javascript">
+
+    function get_json(target, func) {
+        var cur = window.location.href
+        var targetUrl = cur + target
+        fetch(targetUrl).then((response) => response.json()).then((json) => {
+            func(json)
+        })
+    }
+    function load_fraktivitaeten() {
+        get_json('verteilung',show_fraktivitaeten)
+    }
+
+    function show_fraktivitaeten(fraktivitaeten) {
+        var m = new Date()
+        m.setUTCHours(23)
+        m.setUTCMinutes(59)
+        var min = m.getTime()
+        max = new Date(0).getTime()
+        var series = fraktivitaeten.map(frak => {
+            startString = frak.start.split(":")
+            start = new Date()
+            start.setUTCHours(parseInt(startString[0]))
+            start.setUTCMinutes(parseInt(startString[1]))
+            if (start.getTime() < min) {
+                min = start.getTime()
+            }
+            endString = frak.ende.split(":")
+            ende = new Date()
+            ende.setUTCHours(parseInt(endString[0]))
+            ende.setUTCMinutes(parseInt(endString[1]))
+            if (ende.getTime() > max) {
+                max = ende.getTime()
+            }
+            result = {}
+            result.name = frak.name
+            result.data = [{x : frak.raum, y: [start.getTime(),ende.getTime()]}]
+            return result
+        })
+        min -= 900000
+        max += 900000
+        var options = {
+            series: series,
+            chart: {
+                height: 600,
+                type: 'rangeBar',
+            },
+            plotOptions: {
+                bar: {
+                    horizontal: true,
+                    barHeight: '100%',
+                    rangeBarGroupRows: true
+                }
+            },
+            xaxis: {
+                type: 'datetime',
+                min: min,
+                max: max,
+            },
+            stroke: {
+                width: 1
+            },
+            fill: {
+                type: 'solid',
+                opacity: 0.6
+            },
+            legend: {
+                show: false,
+            },
+            tooltip: {
+                custom: function({series, seriesIndex, dataPointIndex, w}) {
+                    var start = new Date(w.globals.seriesRangeStart[seriesIndex][0])
+                    console.log(w.globals.seriesRangeStart[seriesIndex])
+                    var d = new Date(series[seriesIndex][dataPointIndex])
+                    return '<div class="arrow_box">' +
+                        '<span>' + w.config.series[seriesIndex].name + ':' + start.getUTCHours() + ':' + start.getUTCMinutes() + '-' + d.getUTCHours() + ':' + d.getUTCMinutes() + '</span>' +
+                        '</div>'
+                }
+            },
+            dataLabels: {
+                enabled:true,
+                formatter: function(value, { seriesIndex, dataPointIndex, w }) {
+                    return w.config.series[seriesIndex].name
+                }
+            }
+        };
+        var chart = new ApexCharts(document.querySelector("#FraktivitaetenTimeline"), options);
+        chart.render();
+        document.getElementById("FraktivitaetenTimeline").hidden = false
+        document.getElementById("FraktivitaetenNotFound").hidden = true
+    }
+
+    function load_teilnehmer() {
+        get_json('teilnehmer',show_teilnehmer)
+    }
+
+    function show_teilnehmer(teilnehmer) {
+        result = ""
+        teilnehmer.forEach((person) => {
+            result += "<div style='margin-left: 30px; display: inline'><input type='checkbox' id='mit"+person+"' name='"+person+"'>"
+            result += "<label for='mit"+person+"'>"+person+"</label></div>"
+        })
+        result += ""
+        document.getElementById("Teilnehmer").innerHTML = result
+    }
+
+    function load_raum() {
+        get_json('raum',show_raum)
+    }
+
+    function show_raum(raume) {
+        result = ""
+        console.log(raume)
+        raume.forEach((raum) => {
+            result += "<div style='margin-left: 30px; display: inline'><input type='checkbox' id='in"+raum+"' name='"+raum+"'>"
+            result += "<label for='in"+raum+"'>"+raum+"</label></div>"
+        })
+        result += ""
+        document.getElementById("Raum").innerHTML = result
+    }
+
+    window.onload = function() {
+        load_raum()
+        load_teilnehmer()
+        load_fraktivitaeten()
+    }
+</script>
 </html>
