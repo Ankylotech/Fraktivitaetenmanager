@@ -2,17 +2,13 @@ use chrono::NaiveDate;
 use uuid::Uuid;
 
 // Fields that should not matter are intentionaly removed
-#[derive(
-    Clone, Debug,
-)]
+#[derive(Clone, Debug)]
 pub struct FractivityRoom {
     pub id: Uuid,
     pub priority: i32,
 }
 
-#[derive(
-    Clone, Debug,PartialEq, Eq
-)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FractivityEntry {
     pub id: Uuid,
     pub instructor_extension_uuids: Vec<Uuid>,
@@ -24,36 +20,91 @@ pub struct FractivityEntry {
     pub start_day: NaiveDate,
 }
 
+pub fn legal_distribution(
+    distributed: &Vec<(FractivityEntry, Option<(Uuid, i32)>)>,
+    current: &FractivityEntry,
+    room: Option<Uuid>,
+    start: i32,
+) -> bool {
+    let mut legal = true;
+
+    for v in distributed.iter() {
+        if current.start_day != v.0.start_day {
+            continue;
+        }
+        match &v.1 {
+            Some((dist_id, dist_start)) => {
+                if (start - current.preparation_time >= *dist_start - v.0.preparation_time
+                    && start - current.preparation_time
+                        < *dist_start + v.0.duration + v.0.follow_up_time)
+                    || (*dist_start - v.0.preparation_time >= start - current.preparation_time
+                        && *dist_start - v.0.preparation_time
+                            < start + current.duration + current.follow_up_time)
+                {
+                    if room.is_some() && *dist_id == room.unwrap() {
+                        legal = false;
+                        break;
+                    }
+                    legal =
+                        v.0.instructor_extension_uuids
+                            .iter()
+                            .all(|id| !current.instructor_extension_uuids.contains(id));
+                    if !legal {
+                        break;
+                    }
+                }
+            }
+            None => (),
+        }
+    }
+    legal
+}
+
 pub fn distribute(
-    values: &mut Vec<(FractivityEntry, Option<(Uuid, i32)>)>, all_rooms: &Vec<FractivityRoom>
+    values: &mut Vec<(FractivityEntry, Option<(Uuid, i32)>)>,
+    all_rooms: &Vec<FractivityRoom>,
 ) -> Result<Vec<(FractivityEntry, (Uuid, i32))>, FractivityEntry> {
     let mut distribute_cur = values.len();
     let mut max_len = -1;
+    let mut start_count = usize::MAX;
+    let mut current_starts = Vec::new();
     for i in 0..values.len() {
-        if values[i].1.is_none() && values[i].0.allowed_starts.len() == 1 {
-            distribute_cur = i;
-            break;
-        }
-        if values[i].1.is_none() && values[i].0.duration > max_len {
-            distribute_cur = i;
-            max_len = values[i].0.duration;
+        match values[i].1 {
+            Some((_, _)) => {}
+            None => {
+                let starts: Vec<i32> = values[i]
+                    .0
+                    .allowed_starts
+                    .clone()
+                    .into_iter()
+                    .filter(|s| legal_distribution(&values, &values[i].0, None, *s))
+                    .collect();
+                if starts.len() == 0 {
+                    return Err(values[i].0.clone());
+                }
+                if starts.len() < start_count
+                    || (starts.len() == start_count && values[i].0.duration > max_len)
+                {
+                    start_count = starts.len();
+                    current_starts = starts;
+                    distribute_cur = i;
+                    max_len = values[i].0.duration;
+                }
+            }
         }
     }
     if distribute_cur == values.len() {
-        return Ok(
-            values
-                .into_iter()
-                .map(|(e, d)| match d {
-                    Some(v) => (e.clone(), v.clone()),
-                    None => unreachable!(),
-                })
-                .collect(),
-        );
+        return Ok(values
+            .into_iter()
+            .map(|(e, d)| match d {
+                Some(v) => (e.clone(), v.clone()),
+                None => unreachable!(),
+            })
+            .collect());
     }
     let mut last_end = 0;
-    let mut starts = values[distribute_cur].0.allowed_starts.clone();
     let duration = values[distribute_cur].0.duration;
-    for start in &starts {
+    for start in &current_starts {
         if *start + duration > last_end {
             last_end = *start + duration;
         }
@@ -73,59 +124,35 @@ pub fn distribute(
             None => (),
         }
     }
-    let mut r: Vec<&FractivityRoom> = all_rooms.iter().filter(|r| values[distribute_cur].0.allowed_rooms.clone().contains(&r.id)).collect();
+    let mut r: Vec<&FractivityRoom> = all_rooms
+        .iter()
+        .filter(|r| {
+            values[distribute_cur]
+                .0
+                .allowed_rooms
+                .clone()
+                .contains(&r.id)
+        })
+        .collect();
     r.sort_by_key(|f| -f.priority);
     let rooms: Vec<Uuid> = r.iter().map(|f| f.id).collect();
-    let prep = values[distribute_cur].0.preparation_time;
-    let follow = values[distribute_cur].0.follow_up_time;
-    let day = values[distribute_cur].0.start_day;
-    starts.sort_by_cached_key(|s| {
+    current_starts.sort_by_cached_key(|s| {
         concurrent_fractivities[(*s as usize)..=((*s + duration) as usize)]
             .iter()
             .max()
     });
     let mut result = Err(values[distribute_cur].0.clone());
-    for start in starts {
+    for start in current_starts {
         if result.is_ok() {
             break;
         }
         for room in &rooms {
-            let mut legal = true;
-            for v in values.iter() {
-                if day != v.0.start_day {
-                    continue;
-                }
-                match &v.1 {
-                    Some((dist_id, dist_start)) => {
-                        if (start - prep >= *dist_start - v.0.preparation_time
-                            && start - prep < *dist_start + v.0.duration + v.0.follow_up_time)
-                            || (*dist_start - v.0.preparation_time >= start - prep
-                                && *dist_start - v.0.preparation_time < start + duration + follow)
-                        {
-                            if *dist_id == *room {
-                                legal = false;
-                                break;
-                            }
-                            legal = v.0.instructor_extension_uuids.iter().all(|id| {
-                                !values[distribute_cur]
-                                    .0
-                                    .instructor_extension_uuids
-                                    .contains(id)
-                            });
-                            if !legal {
-                                break;
-                            }
-                        }
-                    }
-                    None => (),
-                }
-            }
+            let legal = legal_distribution(values, &values[distribute_cur].0, Some(*room), start);
             if !legal {
                 continue;
             }
-            let dist = (*room, start);
-            values[distribute_cur].1 = Some(dist);
-            result = distribute(values,all_rooms); 
+            values[distribute_cur].1 = Some((*room, start));
+            result = distribute(values, all_rooms);
             if result.is_ok() {
                 return result;
             }
