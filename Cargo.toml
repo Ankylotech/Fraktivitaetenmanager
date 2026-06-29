@@ -7,5 +7,10 @@ edition = "2021"
 
 [dependencies]
 
-uuid = { version = "1.4", features = ["v4", "serde"] }
-chrono = { version = "0.4.30", features = ["serde"] }
+uuid = { version = "1.23", features = ["v4", "serde"] }
+chrono = { version = "0.4.44", features = ["serde"] }
+rand = {version = "0.10"}
+rand_distr = {version = "0.6"}
+
+[profile.release]
+debug = true
