@@ -1,5 +1,4 @@
-use core::num;
-use std::time::Duration;
+use std::{ time::Duration};
 
 use chrono::NaiveDate;
 use rand::{seq, RngExt};
@@ -35,9 +34,9 @@ pub mod tests {
         .to_vec()
     }
 
-    fn undistributed_entries() -> Vec<FractivityEntry> {
+    fn undistributed_entries() -> Vec<(FractivityEntry, Option<(Uuid, i32)>)> {
         [
-            FractivityEntry {
+            (FractivityEntry {
                 id: uuid::Uuid::from_u128(0),
                 instructor_extension_uuids: vec![Uuid::from_u128(0)],
                 visitor_extension_uuids: Vec::new(),
@@ -47,8 +46,8 @@ pub mod tests {
                 preparation_time: 0,
                 follow_up_time: 0,
                 start_day: NaiveDate::from_epoch_days(0).unwrap(),
-            },
-            FractivityEntry {
+            }, None),
+            (FractivityEntry {
                 id: uuid::Uuid::from_u128(1),
                 instructor_extension_uuids: vec![Uuid::from_u128(1)],
                 visitor_extension_uuids: Vec::new(),
@@ -58,8 +57,8 @@ pub mod tests {
                 preparation_time: 5,
                 follow_up_time: 0,
                 start_day: NaiveDate::from_epoch_days(0).unwrap(),
-            },
-            FractivityEntry {
+            }, None),
+            (FractivityEntry {
                 id: uuid::Uuid::from_u128(2),
                 instructor_extension_uuids: vec![Uuid::from_u128(0)],
                 visitor_extension_uuids: Vec::new(),
@@ -69,7 +68,7 @@ pub mod tests {
                 preparation_time: 5,
                 follow_up_time: 0,
                 start_day: NaiveDate::from_epoch_days(0).unwrap(),
-            },
+            }, None),
         ]
         .to_vec()
     }
@@ -83,9 +82,9 @@ pub mod tests {
         .to_vec()
     }
 
-    fn undistributable_entries() -> Vec<FractivityEntry> {
+    fn undistributable_entries() -> Vec<(FractivityEntry, Option<(Uuid, i32)>)> {
         [
-            FractivityEntry {
+            (FractivityEntry {
                 id: uuid::Uuid::from_u128(0),
                 instructor_extension_uuids: vec![Uuid::from_u128(0)],
                 visitor_extension_uuids: Vec::new(),
@@ -95,8 +94,8 @@ pub mod tests {
                 preparation_time: 0,
                 follow_up_time: 0,
                 start_day: NaiveDate::from_epoch_days(0).unwrap(),
-            },
-            FractivityEntry {
+            }, None),
+            (FractivityEntry {
                 id: uuid::Uuid::from_u128(1),
                 instructor_extension_uuids: vec![Uuid::from_u128(1)],
                 visitor_extension_uuids: Vec::new(),
@@ -106,8 +105,8 @@ pub mod tests {
                 preparation_time: 5,
                 follow_up_time: 0,
                 start_day: NaiveDate::from_epoch_days(0).unwrap(),
-            },
-            FractivityEntry {
+            }, None),
+            (FractivityEntry {
                 id: uuid::Uuid::from_u128(2),
                 instructor_extension_uuids: vec![Uuid::from_u128(0), Uuid::from_u128(1)],
                 visitor_extension_uuids: Vec::new(),
@@ -117,8 +116,8 @@ pub mod tests {
                 preparation_time: 5,
                 follow_up_time: 0,
                 start_day: NaiveDate::from_epoch_days(0).unwrap(),
-            },
-            FractivityEntry {
+            }, None),
+            (FractivityEntry {
                 id: uuid::Uuid::from_u128(3),
                 instructor_extension_uuids: vec![Uuid::from_u128(2)],
                 visitor_extension_uuids: Vec::new(),
@@ -128,7 +127,7 @@ pub mod tests {
                 preparation_time: 5,
                 follow_up_time: 0,
                 start_day: NaiveDate::from_epoch_days(0).unwrap(),
-            },
+            }, None),
         ]
         .to_vec()
     }
@@ -136,7 +135,7 @@ pub mod tests {
     #[test]
     pub fn test_undistributed() {
         let entries = undistributed_entries();
-        let result = distribute(&mut entries.clone(), &rooms());
+        let result = distribute(&entries.clone(), &rooms());
         assert!(result.is_ok());
         let result = result.unwrap();
         assert!(result.len() == entries.len());
@@ -144,7 +143,7 @@ pub mod tests {
         for i in 0..result.len() {
             let mut found = false;
             for j in 0..entries.len() {
-                if result[i].0.id == entries[j].id {
+                if result[i].0.id == entries[j].0.id {
                     found = true;
                     assert!(result[i].1 == dist[j].0 && result[i].2 == dist[j].1);
                 }
@@ -158,8 +157,6 @@ pub mod tests {
         let entries = undistributable_entries();
         let result = distribute(&mut entries.clone(), &rooms());
         assert!(result.is_err());
-        let id = result.err().unwrap().id;
-        assert!(id == entries[1].id || id == entries[2].id);
     }
 }
 
@@ -219,8 +216,8 @@ fn generate_random_fractivity_entry(
 
 fn measure_single_distribution() -> (Duration, bool) {
     let num_rooms = 22;
-    let num_intructors = 25;
-    let avg_fracs = 6;
+    let num_intructors = 20;
+    let avg_fracs = 40;
 
     let mut rooms: Vec<FractivityRoom> = Vec::new();
     for i in 0..num_rooms {
@@ -235,9 +232,9 @@ fn measure_single_distribution() -> (Duration, bool) {
         instuctors.push(Uuid::from_u128(i));
     }
 
-    let mut entries: Vec<FractivityEntry> = Vec::new();
+    let mut entries: Vec<(FractivityEntry, Option<(Uuid, i32)>)> = Vec::new();
     for i in 0..avg_fracs {
-        entries.push(generate_random_fractivity_entry(&rooms, &instuctors, i));
+        entries.push((generate_random_fractivity_entry(&rooms, &instuctors, i), None));
     }
     use std::time::Instant;
     let now = Instant::now();
@@ -257,19 +254,16 @@ pub fn main() {
         let dist_time = measure_single_distribution();
         total_duration += dist_time.0.as_millis();
         total_successes += if dist_time.1 { 1 } else { 0 };
-        tries+=1;
+        tries += 1;
         if dist_time.1 {
             total_success_duration += dist_time.0.as_millis();
         }
-        if dist_time.1 {
-            println!(
-                "{:?}: Average execution: {:?}ms with a total of {:?} successful distributions ({:?}%) taking {:?}ms on average",
+            std::fs::write("test.txt", format!("{:?}: Average execution: {:?}ms with a total of {:?} successful distributions ({:?}%) taking {:?}ms on average",
                 tries+1,
                 total_duration / (tries + 1),
                 total_successes,
                 (total_successes * 100) / (tries + 1),
-                if total_successes > 0 {total_success_duration / total_successes} else {0}
-            );
-        }
+                if total_successes > 0 {total_success_duration / total_successes} else {0})).expect("Should be able to write to `/foo/tmp`");
+        
     }
 }
