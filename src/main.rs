@@ -1,4 +1,4 @@
-use std::{ time::Duration};
+use std::time::Duration;
 
 use chrono::NaiveDate;
 use rand::{seq, RngExt};
@@ -36,39 +36,48 @@ pub mod tests {
 
     fn undistributed_entries() -> Vec<(FractivityEntry, Option<(Uuid, i32)>)> {
         [
-            (FractivityEntry {
-                id: uuid::Uuid::from_u128(0),
-                instructor_extension_uuids: vec![Uuid::from_u128(0)],
-                visitor_extension_uuids: Vec::new(),
-                duration: 30,
-                allowed_rooms: vec![Uuid::from_u128(0)],
-                allowed_starts: vec![0],
-                preparation_time: 0,
-                follow_up_time: 0,
-                start_day: NaiveDate::from_epoch_days(0).unwrap(),
-            }, None),
-            (FractivityEntry {
-                id: uuid::Uuid::from_u128(1),
-                instructor_extension_uuids: vec![Uuid::from_u128(1)],
-                visitor_extension_uuids: Vec::new(),
-                duration: 30,
-                allowed_rooms: vec![Uuid::from_u128(0)],
-                allowed_starts: vec![0, 15, 30, 45],
-                preparation_time: 5,
-                follow_up_time: 0,
-                start_day: NaiveDate::from_epoch_days(0).unwrap(),
-            }, None),
-            (FractivityEntry {
-                id: uuid::Uuid::from_u128(2),
-                instructor_extension_uuids: vec![Uuid::from_u128(0)],
-                visitor_extension_uuids: Vec::new(),
-                duration: 30,
-                allowed_rooms: vec![Uuid::from_u128(0), Uuid::from_u128(1)],
-                allowed_starts: vec![0, 15, 30, 45],
-                preparation_time: 5,
-                follow_up_time: 0,
-                start_day: NaiveDate::from_epoch_days(0).unwrap(),
-            }, None),
+            (
+                FractivityEntry {
+                    id: uuid::Uuid::from_u128(0),
+                    instructor_extension_uuids: vec![Uuid::from_u128(0)],
+                    visitor_extension_uuids: Vec::new(),
+                    duration: 30,
+                    allowed_rooms: vec![Uuid::from_u128(0)],
+                    allowed_starts: vec![0],
+                    preparation_time: 0,
+                    follow_up_time: 0,
+                    start_day: NaiveDate::from_epoch_days(0).unwrap(),
+                },
+                None,
+            ),
+            (
+                FractivityEntry {
+                    id: uuid::Uuid::from_u128(1),
+                    instructor_extension_uuids: vec![Uuid::from_u128(1)],
+                    visitor_extension_uuids: Vec::new(),
+                    duration: 30,
+                    allowed_rooms: vec![Uuid::from_u128(0)],
+                    allowed_starts: vec![0, 15, 30, 45],
+                    preparation_time: 5,
+                    follow_up_time: 0,
+                    start_day: NaiveDate::from_epoch_days(0).unwrap(),
+                },
+                None,
+            ),
+            (
+                FractivityEntry {
+                    id: uuid::Uuid::from_u128(2),
+                    instructor_extension_uuids: vec![Uuid::from_u128(0)],
+                    visitor_extension_uuids: Vec::new(),
+                    duration: 30,
+                    allowed_rooms: vec![Uuid::from_u128(0), Uuid::from_u128(1)],
+                    allowed_starts: vec![0, 15, 30, 45],
+                    preparation_time: 5,
+                    follow_up_time: 0,
+                    start_day: NaiveDate::from_epoch_days(0).unwrap(),
+                },
+                None,
+            ),
         ]
         .to_vec()
     }
@@ -84,50 +93,62 @@ pub mod tests {
 
     fn undistributable_entries() -> Vec<(FractivityEntry, Option<(Uuid, i32)>)> {
         [
-            (FractivityEntry {
-                id: uuid::Uuid::from_u128(0),
-                instructor_extension_uuids: vec![Uuid::from_u128(0)],
-                visitor_extension_uuids: Vec::new(),
-                duration: 30,
-                allowed_rooms: vec![Uuid::from_u128(0)],
-                allowed_starts: vec![0],
-                preparation_time: 0,
-                follow_up_time: 0,
-                start_day: NaiveDate::from_epoch_days(0).unwrap(),
-            }, None),
-            (FractivityEntry {
-                id: uuid::Uuid::from_u128(1),
-                instructor_extension_uuids: vec![Uuid::from_u128(1)],
-                visitor_extension_uuids: Vec::new(),
-                duration: 30,
-                allowed_rooms: vec![Uuid::from_u128(0)],
-                allowed_starts: vec![0, 15, 30, 45],
-                preparation_time: 5,
-                follow_up_time: 0,
-                start_day: NaiveDate::from_epoch_days(0).unwrap(),
-            }, None),
-            (FractivityEntry {
-                id: uuid::Uuid::from_u128(2),
-                instructor_extension_uuids: vec![Uuid::from_u128(0), Uuid::from_u128(1)],
-                visitor_extension_uuids: Vec::new(),
-                duration: 30,
-                allowed_rooms: vec![Uuid::from_u128(1)],
-                allowed_starts: vec![0, 15, 30, 45],
-                preparation_time: 5,
-                follow_up_time: 0,
-                start_day: NaiveDate::from_epoch_days(0).unwrap(),
-            }, None),
-            (FractivityEntry {
-                id: uuid::Uuid::from_u128(3),
-                instructor_extension_uuids: vec![Uuid::from_u128(2)],
-                visitor_extension_uuids: Vec::new(),
-                duration: 30,
-                allowed_rooms: vec![Uuid::from_u128(1)],
-                allowed_starts: vec![0, 15, 30, 45],
-                preparation_time: 5,
-                follow_up_time: 0,
-                start_day: NaiveDate::from_epoch_days(0).unwrap(),
-            }, None),
+            (
+                FractivityEntry {
+                    id: uuid::Uuid::from_u128(0),
+                    instructor_extension_uuids: vec![Uuid::from_u128(0)],
+                    visitor_extension_uuids: Vec::new(),
+                    duration: 30,
+                    allowed_rooms: vec![Uuid::from_u128(0)],
+                    allowed_starts: vec![0],
+                    preparation_time: 0,
+                    follow_up_time: 0,
+                    start_day: NaiveDate::from_epoch_days(0).unwrap(),
+                },
+                None,
+            ),
+            (
+                FractivityEntry {
+                    id: uuid::Uuid::from_u128(1),
+                    instructor_extension_uuids: vec![Uuid::from_u128(1)],
+                    visitor_extension_uuids: Vec::new(),
+                    duration: 30,
+                    allowed_rooms: vec![Uuid::from_u128(0)],
+                    allowed_starts: vec![0, 15, 30, 45],
+                    preparation_time: 5,
+                    follow_up_time: 0,
+                    start_day: NaiveDate::from_epoch_days(0).unwrap(),
+                },
+                None,
+            ),
+            (
+                FractivityEntry {
+                    id: uuid::Uuid::from_u128(2),
+                    instructor_extension_uuids: vec![Uuid::from_u128(0), Uuid::from_u128(1)],
+                    visitor_extension_uuids: Vec::new(),
+                    duration: 30,
+                    allowed_rooms: vec![Uuid::from_u128(1)],
+                    allowed_starts: vec![0, 15, 30, 45],
+                    preparation_time: 5,
+                    follow_up_time: 0,
+                    start_day: NaiveDate::from_epoch_days(0).unwrap(),
+                },
+                None,
+            ),
+            (
+                FractivityEntry {
+                    id: uuid::Uuid::from_u128(3),
+                    instructor_extension_uuids: vec![Uuid::from_u128(2)],
+                    visitor_extension_uuids: Vec::new(),
+                    duration: 30,
+                    allowed_rooms: vec![Uuid::from_u128(1)],
+                    allowed_starts: vec![0, 15, 30, 45],
+                    preparation_time: 5,
+                    follow_up_time: 0,
+                    start_day: NaiveDate::from_epoch_days(0).unwrap(),
+                },
+                None,
+            ),
         ]
         .to_vec()
     }
@@ -174,50 +195,59 @@ fn generate_random_duration() -> i32 {
     v.to_i32().unwrap()
 }
 
-fn generate_random_starts() -> Vec<i32> {
-    let day_duration = 7 * 60;
-
+fn generate_random_starts(start: i32) -> Vec<i32> {
     let mut rng = rand::rng();
-    let amount = rng.random_range(1..(day_duration / 14));
-    let start = rng.random_range(0..(day_duration - amount));
+    let amount = rng.random_range(45..120);
 
     ((start)..(start + amount)).collect()
 }
 
-fn generate_random_fractivity_entry(
+fn generate_random_fractivity_entries(
     rooms: &Vec<FractivityRoom>,
     instuctors: &Vec<Uuid>,
-    id: u128,
-) -> FractivityEntry {
+) -> Vec<(FractivityEntry, Option<(Uuid, i32)>)> {
+    //let min_fracs = 40;
+    let day_duration = 7 * 60;
+    let mut result = Vec::new();
     let mut rng = rand::rng();
-    let room_idx = rng.random_range(1..(rooms.len() / 2));
-    let chosen_rooms = seq::index::sample(&mut rng, rooms.len(), room_idx)
-        .into_iter()
-        .map(|i| rooms[i].id)
-        .collect();
-    let instructor_idx = rng.random_range(1..(instuctors.len() / 5));
-    let chosen_instructors = seq::index::sample(&mut rng, instuctors.len(), instructor_idx)
-        .into_iter()
-        .map(|i| instuctors[i])
-        .collect();
+    for i in (0..day_duration).step_by(120) {
+        let mut available_instructor = 0;
+        for k in 0..10 {
+            let num_instructors =
+                rng.random_range(1..(instuctors.len() - available_instructor - (9 - k)));
+            let chosen_instructors = (available_instructor
+                ..(available_instructor + num_instructors))
+                .map(|i| instuctors[i])
+                .collect();
+            available_instructor += num_instructors;
+            let room_idx = rng.random_range(1..(rooms.len() / 2));
+            let chosen_rooms = seq::index::sample(&mut rng, rooms.len(), room_idx)
+                .into_iter()
+                .map(|i| rooms[i].id)
+                .collect();
 
-    FractivityEntry {
-        id: Uuid::from_u128(id),
-        instructor_extension_uuids: chosen_instructors,
-        visitor_extension_uuids: Vec::new(),
-        duration: generate_random_duration(),
-        allowed_rooms: chosen_rooms,
-        allowed_starts: generate_random_starts(),
-        preparation_time: 5,
-        follow_up_time: 0,
-        start_day: NaiveDate::from_epoch_days(0).unwrap(),
+            result.push((
+                FractivityEntry {
+                    id: Uuid::from_u128((result.len() - 1) as u128),
+                    instructor_extension_uuids: chosen_instructors,
+                    visitor_extension_uuids: Vec::new(),
+                    duration: generate_random_duration(),
+                    allowed_rooms: chosen_rooms,
+                    allowed_starts: generate_random_starts(i),
+                    preparation_time: 5,
+                    follow_up_time: 0,
+                    start_day: NaiveDate::from_epoch_days(0).unwrap(),
+                },
+                None,
+            ));
+        }
     }
+    result
 }
 
 fn measure_single_distribution() -> (Duration, bool) {
     let num_rooms = 22;
     let num_intructors = 20;
-    let avg_fracs = 40;
 
     let mut rooms: Vec<FractivityRoom> = Vec::new();
     for i in 0..num_rooms {
@@ -232,10 +262,9 @@ fn measure_single_distribution() -> (Duration, bool) {
         instuctors.push(Uuid::from_u128(i));
     }
 
-    let mut entries: Vec<(FractivityEntry, Option<(Uuid, i32)>)> = Vec::new();
-    for i in 0..avg_fracs {
-        entries.push((generate_random_fractivity_entry(&rooms, &instuctors, i), None));
-    }
+    let entries: Vec<(FractivityEntry, Option<(Uuid, i32)>)> =
+        generate_random_fractivity_entries(&rooms, &instuctors);
+
     use std::time::Instant;
     let now = Instant::now();
 
@@ -250,20 +279,24 @@ pub fn main() {
     let mut total_duration = 0;
     let mut total_success_duration = 0;
     let mut total_successes = 0;
+    let mut max_duration = 0;
     while total_successes < num_sucesses {
         let dist_time = measure_single_distribution();
         total_duration += dist_time.0.as_millis();
+        if dist_time.0.as_millis() > max_duration {
+            max_duration = dist_time.0.as_millis();
+        }
         total_successes += if dist_time.1 { 1 } else { 0 };
         tries += 1;
         if dist_time.1 {
             total_success_duration += dist_time.0.as_millis();
         }
-            std::fs::write("test.txt", format!("{:?}: Average execution: {:?}ms with a total of {:?} successful distributions ({:?}%) taking {:?}ms on average",
+        std::fs::write("test.txt", format!("{:?}: Average execution: {:?}ms, max distribution: {:?}ms with a total of {:?} successful distributions ({:?}%) taking {:?}ms on average",
                 tries+1,
                 total_duration / (tries + 1),
+                max_duration,
                 total_successes,
                 (total_successes * 100) / (tries + 1),
                 if total_successes > 0 {total_success_duration / total_successes} else {0})).expect("Should be able to write to `/foo/tmp`");
-        
     }
 }
