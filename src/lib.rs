@@ -123,11 +123,11 @@ pub fn distribute(
 fn create_fractivity_variables(
     fractivity_entries: &Vec<(FractivityEntry, Option<(Uuid, i32)>)>,
     all_rooms: &Vec<FractivityRoom>,
-    all_instructors: &Vec<Uuid>,
     first_start: i32,
     num_starts: i32,
     all_vars: &mut ProblemVariables,
     objective: &mut Expression,
+    room_prio_objective: &mut Expression,
 ) -> (Vec<Vec<Option<Variable>>>, Vec<Vec<Option<Variable>>>) {
     let mut starts = Vec::new();
     let mut rooms = Vec::new();
@@ -141,20 +141,14 @@ fn create_fractivity_variables(
                 Some((_, start)) => {
                     if cur_start == start {
                         let v = all_vars.add(variable().binary());
-                        objective.add_mul(
-                            (fractivity_entries.len()
-                                * fractivity_entries.len()
-                                * all_instructors.len()) as f64,
-                            v,
-                        );
+                        objective.add_mul(fractivity_entries.len() as f64, v);
                         res = Some(v);
                     }
                 }
                 None => {
                     if a.0.allowed_starts.contains(&cur_start) {
                         let v = all_vars.add(variable().binary());
-                        objective
-                            .add_mul((fractivity_entries.len() * all_instructors.len()) as f64, v);
+                        objective.add_mul(1.0, v);
                         res = Some(v);
                     }
                 }
@@ -170,20 +164,15 @@ fn create_fractivity_variables(
                 Some((id, _)) => {
                     if id == r.id {
                         let v = all_vars.add(variable().binary());
-                        objective.add_mul(
-                            (fractivity_entries.len()
-                                * fractivity_entries.len()
-                                * all_instructors.len()) as f64,
-                            v,
-                        );
+                        objective.add_mul(fractivity_entries.len() as f64, v);
                         res = Some(v);
                     }
                 }
                 None => {
                     if a.0.allowed_rooms.contains(&r.id) {
                         let v = all_vars.add(variable().binary());
-                        objective
-                            .add_mul((fractivity_entries.len() * all_instructors.len()) as f64, v);
+                        objective.add_mul(1.0, v);
+                        room_prio_objective.add_mul(r.priority as f64, v);
                         res = Some(v);
                     }
                 }
@@ -268,7 +257,7 @@ fn create_parallel_variables(
     b
 }
 
-pub fn add_constraints(
+fn add_constraints(
     fractivity_entries: &Vec<(FractivityEntry, Option<(Uuid, i32)>)>,
     all_rooms: &Vec<FractivityRoom>,
     all_instructors: &Vec<Uuid>,
@@ -400,7 +389,7 @@ pub fn add_constraints(
     }
 }
 
-pub fn lp_distribution(
+fn lp_distribution(
     fractivity_entries: &Vec<(FractivityEntry, Option<(Uuid, i32)>)>,
     all_rooms: &Vec<FractivityRoom>,
     all_instructors: &Vec<Uuid>,
@@ -409,26 +398,19 @@ pub fn lp_distribution(
 ) -> Result<Result<Vec<(usize, Uuid, i32)>, Vec<FractivityEntry>>, String> {
     let mut all_vars = variables!();
     let mut max_distribution_obj = Expression::default();
+    let mut parallel_obj = Expression::default();
     let (starts, rooms) = create_fractivity_variables(
         fractivity_entries,
         all_rooms,
-        all_instructors,
         first_start,
         num_starts,
         &mut all_vars,
         &mut max_distribution_obj,
+        &mut parallel_obj,
     );
     let (instructor_overlap, room_overlap, any_overlap) =
         create_fractivity_pair_variables(fractivity_entries, &mut all_vars);
-    let mut parallel_obj = Expression::default();
     let mut visitor_obj = Expression::default();
-    let b = create_parallel_variables(
-        fractivity_entries,
-        all_rooms,
-        num_starts,
-        &mut all_vars,
-        &mut parallel_obj,
-    );
     let v = create_visitor_variables(
         fractivity_entries,
         all_instructors,
@@ -436,6 +418,13 @@ pub fn lp_distribution(
         &mut visitor_obj,
     );
 
+    let b = create_parallel_variables(
+        fractivity_entries,
+        all_rooms,
+        num_starts,
+        &mut all_vars,
+        &mut parallel_obj,
+    );
     let mut problem = all_vars
         .clone()
         .maximise(max_distribution_obj)
