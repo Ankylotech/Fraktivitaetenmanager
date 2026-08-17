@@ -7,10 +7,9 @@ use chrono::NaiveDate;
 use uuid::Uuid;
 
 use good_lp::{
-    constraint, default_solver,
-    solvers::coin_cbc::CoinCbcProblem,
-    variable, variables, Expression, IntoAffineExpression, ProblemVariables,
-    Solution, SolverModel, Variable, WithMipGap, WithTimeLimit,
+    constraint, default_solver, solvers::coin_cbc::CoinCbcProblem, variable, variables, Expression,
+    IntoAffineExpression, ProblemVariables, Solution, SolverModel, Variable, WithMipGap,
+    WithTimeLimit,
 };
 
 // Fields that should not matter are intentionally removed
@@ -483,18 +482,21 @@ pub fn lp_distribution(
                 }
                 if !dist.0 || !dist.1 {
                     err_undistributed.push(fractivity_entries[a].0.clone());
-                } 
+                }
             }
 
             if !err_undistributed.is_empty() {
                 Ok(Err(err_undistributed))
             } else {
-                problem = all_vars
+                problem = match all_vars
                     .clone()
                     .maximise(visitor_obj.clone())
                     .using(default_solver)
                     .with_mip_gap(0.5)
-                    .unwrap();
+                {
+                    Ok(o) => o,
+                    Err(e) => return Err(e.to_string()),
+                };
                 add_constraints(
                     fractivity_entries,
                     all_rooms,
@@ -518,7 +520,8 @@ pub fn lp_distribution(
                             .maximise(parallel_obj)
                             .using(default_solver)
                             .with_time_limit(1)
-                            .with_mip_gap(0.5).unwrap();
+                            .with_mip_gap(0.5)
+                            .unwrap();
                         add_constraints(
                             fractivity_entries,
                             all_rooms,
@@ -584,16 +587,16 @@ pub fn lp_distribution(
                                 if err_undistributed.is_empty() {
                                     Ok(Ok(result_distributed))
                                 } else {
-                                    panic!("We expect everything to be distributed, but something wasnt");
+                                    Ok(Err(err_undistributed))
                                 }
                             }
-                            Err(e) => panic!("{}",e.to_string()),
+                            Err(e) => Err(e.to_string()),
                         }
                     }
-                    Err(e) => panic!("{}",e.to_string()),
+                    Err(e) => Err(e.to_string()),
                 }
             }
         }
-        Err(e) => panic!("{}",e.to_string()),
+        Err(e) => Err(e.to_string()),
     }
 }
