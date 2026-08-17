@@ -11,7 +11,7 @@ uuid = { version = "1.23.4", features = ["v4", "serde"] }
 chrono = { version = "0.4.44", features = ["serde"] }
 rand = {version = "0.10"}
 rand_distr = {version = "0.6"}
-good_lp = { version = "1.15", features = ["highs"], default-features = false }
+good_lp = { version = "1.15"}
 
 [profile.release]
 debug = true

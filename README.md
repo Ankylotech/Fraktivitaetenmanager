@@ -10,9 +10,5 @@ gibt es für eine Fraktivität 15 Minuten Vorbereitungszeit und 0 Minuten Nachbe
 
 ### Funktionalität
 
-Die Verteilung errfolgt generell über recursive Backtracking. Die Fraktivitäten werden also nacheinander in einem Raum und zu einem Zeitpunkt 
-verteilt und dann überprüft ob die übrigen Fraktivitäten sonst noch verteilt werden können. Ist dies nicht der Fall, 
-wird eine andere Stelle für die Fraktivität ausprobiert. 
-
-Die Fraktivitäten und Zeitpunkte werden dabei sortiert, so dass Lösungen bei denen die Fraktivitäten gut über den Tag verteilt sind zuerst gefunden werden.
+Die Verteilung erfolgt mithilfe einer Formulierung des Problems als lineares Programm.
 
