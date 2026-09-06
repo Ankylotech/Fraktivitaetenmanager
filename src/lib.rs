@@ -1,16 +1,20 @@
+use core::time;
 use std::{
     cmp::{max, min},
     collections::HashSet,
 };
 
+mod distribution_checks;
+
 use chrono::NaiveDate;
 use uuid::Uuid;
 
 use good_lp::{
-    constraint, default_solver, solvers::coin_cbc::CoinCbcProblem, variable, variables, Expression,
-    IntoAffineExpression, ProblemVariables, Solution, SolverModel, Variable, WithMipGap,
-    WithTimeLimit,
+    constraint, default_solver, variable, variables, Expression, IntoAffineExpression,
+    ProblemVariables, Solution, SolverModel, Variable, WithMipGap,
 };
+
+use gcd::Gcd;
 
 // Fields that should not matter are intentionally removed
 #[derive(Clone, Debug)]
@@ -31,9 +35,8 @@ pub struct FractivityEntry {
     pub preparation_time: i32,
     pub follow_up_time: i32,
     pub start_day: NaiveDate,
+    pub blocker: bool,
 }
-
-const TIME_RESOLUTION: i32 = 15;
 
 fn occupies(a: &FractivityEntry, s: i32, t: i32) -> bool {
     t >= s - a.preparation_time && t < s + a.duration + a.follow_up_time
@@ -51,6 +54,8 @@ pub fn distribute(
     let mut rooms_aggregator = HashSet::new();
     let mut first_start = i32::MAX;
     let mut last_start = i32::MIN;
+    let mut last_finish = i32::MIN;
+    let mut time_resolution = 30;
 
     println!("Distributing the following entries:");
 
@@ -78,13 +83,32 @@ pub fn distribute(
         }
         first_start = min(first_start, entry.0.allowed_starts[0]);
 
-        last_start = max(
-            last_start,
-            entry.0.allowed_starts[entry.0.allowed_starts.len() - 1],
-        );
-    }
+        last_start = max(last_start, *entry.0.allowed_starts.last().unwrap());
 
-    let num_starts = ((last_start - first_start) / TIME_RESOLUTION) + 1;
+        last_finish = max(
+            last_finish,
+            *entry.0.allowed_starts.last().unwrap() + entry.0.duration,
+        );
+
+        time_resolution = Gcd::gcd(time_resolution, entry.0.duration as u64);
+        if entry.0.preparation_time > 0 {
+            time_resolution = Gcd::gcd(time_resolution, entry.0.preparation_time as u64);
+        }
+        if entry.0.follow_up_time > 0 {
+            time_resolution = Gcd::gcd(time_resolution, entry.0.follow_up_time as u64);
+        }
+
+        if entry.0.allowed_starts[0] > 0 {
+            time_resolution = Gcd::gcd(time_resolution, entry.0.allowed_starts[0] as u64);
+        }
+
+        if *entry.0.allowed_starts.last().unwrap() > 0 {
+            time_resolution = Gcd::gcd(
+                time_resolution,
+                *entry.0.allowed_starts.last().unwrap() as u64,
+            );
+        }
+    }
 
     let all_instructors: Vec<Uuid> = instructors_aggregator.into_iter().collect();
 
@@ -111,7 +135,9 @@ pub fn distribute(
         &all_rooms,
         &all_instructors,
         first_start,
-        num_starts,
+        last_start,
+        last_finish,
+        time_resolution as i32,
     )?
     .map(|v| {
         v.iter()
@@ -123,40 +149,28 @@ pub fn distribute(
 fn create_fractivity_variables(
     fractivity_entries: &Vec<(FractivityEntry, Option<(Uuid, i32)>)>,
     all_rooms: &Vec<FractivityRoom>,
-    first_start: i32,
-    num_starts: i32,
+    num_instructors: usize,
     all_vars: &mut ProblemVariables,
     objective: &mut Expression,
-    room_prio_objective: &mut Expression,
-) -> (Vec<Vec<Option<Variable>>>, Vec<Vec<Option<Variable>>>) {
+    max_dist_objective: &mut Expression,
+) -> (Vec<Variable>, Vec<Vec<Option<Variable>>>, Vec<Variable>) {
     let mut starts = Vec::new();
     let mut rooms = Vec::new();
+    let mut distributed = Vec::new();
 
     for a in fractivity_entries {
-        let mut st = Vec::new();
-        for s in 0..num_starts {
-            let cur_start = first_start + TIME_RESOLUTION * s;
-            let mut res = None;
-            match a.1 {
-                Some((_, start)) => {
-                    if cur_start == start {
-                        let v = all_vars.add(variable().binary());
-                        objective.add_mul(fractivity_entries.len() as f64, v);
-                        res = Some(v);
-                    }
-                }
-                None => {
-                    if a.0.allowed_starts.contains(&cur_start) {
-                        let v = all_vars.add(variable().binary());
-                        objective.add_mul(1.0, v);
-                        res = Some(v);
-                    }
-                }
-            }
-
-            st.push(res);
+        let v = all_vars.add(variable().integer());
+        starts.push(v);
+        let d = all_vars.add(variable().binary());
+        distributed.push(d);
+        if a.0.blocker {
+            max_dist_objective.add_mul((4 * num_instructors) as f64, d);
+        } else {
+            max_dist_objective.add_mul(
+                (2 * num_instructors + a.0.instructor_extension_uuids.len()) as f64,
+                d,
+            );
         }
-        starts.push(st);
         let mut room = Vec::new();
         for r in all_rooms {
             let mut res = None;
@@ -164,15 +178,13 @@ fn create_fractivity_variables(
                 Some((id, _)) => {
                     if id == r.id {
                         let v = all_vars.add(variable().binary());
-                        objective.add_mul(fractivity_entries.len() as f64, v);
                         res = Some(v);
                     }
                 }
                 None => {
                     if a.0.allowed_rooms.contains(&r.id) {
                         let v = all_vars.add(variable().binary());
-                        objective.add_mul(1.0, v);
-                        room_prio_objective.add_mul(r.priority as f64, v);
+                        objective.add_mul(r.priority as f64, v);
                         res = Some(v);
                     }
                 }
@@ -183,16 +195,17 @@ fn create_fractivity_variables(
         rooms.push(room)
     }
 
-    (starts, rooms)
+    (starts, rooms, distributed)
 }
 
 fn create_fractivity_pair_variables(
     fractivity_entries: &Vec<(FractivityEntry, Option<(Uuid, i32)>)>,
     all_vars: &mut ProblemVariables,
-) -> (Vec<Variable>, Vec<Variable>, Vec<Variable>) {
+) -> (Vec<Variable>, Vec<Variable>, Vec<Variable>, Vec<Variable>) {
     let mut instructor_overlap = Vec::new();
     let mut room_overlap = Vec::new();
     let mut any_overlap = Vec::new();
+    let mut fractivity_order = Vec::new();
     for a in 0..fractivity_entries.len() {
         for _ in (a + 1)..fractivity_entries.len() {
             let i = all_vars.add(variable().binary());
@@ -201,9 +214,16 @@ fn create_fractivity_pair_variables(
             room_overlap.push(r);
             let o = all_vars.add(variable().binary());
             any_overlap.push(o);
+            let order = all_vars.add(variable().binary());
+            fractivity_order.push(order);
         }
     }
-    (instructor_overlap, room_overlap, any_overlap)
+    (
+        instructor_overlap,
+        room_overlap,
+        any_overlap,
+        fractivity_order,
+    )
 }
 
 fn create_visitor_variables(
@@ -224,7 +244,10 @@ fn create_visitor_variables(
                     "adding visitor variable for fractivity {:?} visitor {:?} ",
                     fractivity_entries[a].0.topic, i
                 );
-                objective.add_mul(1.0, var);
+                objective.add_mul(
+                    (fractivity_entries.len() * all_instructors.len()) as f64,
+                    var,
+                );
                 res = Some(var);
             }
 
@@ -238,13 +261,23 @@ fn create_visitor_variables(
 fn create_parallel_variables(
     fractivity_entries: &Vec<(FractivityEntry, Option<(Uuid, i32)>)>,
     all_rooms: &Vec<FractivityRoom>,
-    num_starts: i32,
+    num_time_steps: i32,
     all_vars: &mut ProblemVariables,
     objective: &mut Expression,
-) -> Vec<Vec<Variable>> {
+) -> (Vec<Vec<Variable>>, Vec<Vec<Variable>>) {
+    let mut fractivity_occupies = Vec::new();
+
+    for _ in 0..num_time_steps {
+        let mut fractivity_occupies_time = Vec::new();
+        for _ in 0..fractivity_entries.len() {
+            fractivity_occupies_time.push(all_vars.add(variable().binary()));
+        }
+        fractivity_occupies.push(fractivity_occupies_time);
+    }
+
     let mut b = Vec::new();
-    let max_parallel = fractivity_entries.len().min(all_rooms.len());
-    for _ in 0..num_starts {
+    let max_parallel: usize = fractivity_entries.len().min(all_rooms.len());
+    for _ in 0..num_time_steps {
         let mut bt = Vec::new();
         for k in 0..max_parallel {
             let btk = all_vars.add(variable().binary());
@@ -254,49 +287,99 @@ fn create_parallel_variables(
         b.push(bt);
     }
 
-    b
+    (b, fractivity_occupies)
 }
 
-fn add_constraints(
+fn lp_distribution(
     fractivity_entries: &Vec<(FractivityEntry, Option<(Uuid, i32)>)>,
     all_rooms: &Vec<FractivityRoom>,
     all_instructors: &Vec<Uuid>,
     first_start: i32,
-    num_starts: i32,
-    problem: &mut CoinCbcProblem,
-    starts: &Vec<Vec<Option<Variable>>>,
-    rooms: &Vec<Vec<Option<Variable>>>,
-    instructor_overlap: &Vec<Variable>,
-    room_overlap: &Vec<Variable>,
-    any_overlap: &Vec<Variable>,
-    b: &Vec<Vec<Variable>>,
-    v: &Vec<Vec<Option<Variable>>>,
-    allow_undistributed: bool,
-) {
+    last_start: i32,
+    last_finish: i32,
+    time_resolution: i32,
+) -> Result<Result<Vec<(usize, Uuid, i32)>, Vec<FractivityEntry>>, String> {
+    let mut all_vars = variables!();
+    let mut objective = Expression::default();
+    let num_time_steps = (last_finish - first_start) / time_resolution;
+    let (starts, rooms, _) = create_fractivity_variables(
+        fractivity_entries,
+        all_rooms,
+        all_instructors.len(),
+        &mut all_vars,
+        &mut objective,
+        &mut Expression::default(),
+    );
+    let (instructor_overlap, room_overlap, any_overlap, fractivity_order) =
+        create_fractivity_pair_variables(fractivity_entries, &mut all_vars);
+    let v = create_visitor_variables(
+        fractivity_entries,
+        all_instructors,
+        &mut all_vars,
+        &mut objective,
+    );
+
+    let (b, fractivity_occupies) = create_parallel_variables(
+        fractivity_entries,
+        all_rooms,
+        num_time_steps,
+        &mut all_vars,
+        &mut objective,
+    );
+    let mut problem = all_vars.clone().maximise(objective).using(default_solver);
+    //.with_time_limit(1);
+
     let mut index = 0;
     // Distribute max once and only in legal rooms and starts
     for a in 0..fractivity_entries.len() {
-        let mut start_constr = Expression::default();
-        for s in &starts[a] {
-            if s.is_some() {
-                start_constr.add_mul(1.0, s.unwrap());
-            }
-        }
+        problem.add_constraint(constraint!(
+            starts[a] >= fractivity_entries[a].0.allowed_starts[0]
+        ));
+        problem.add_constraint(constraint!(
+            starts[a] <= *fractivity_entries[a].0.allowed_starts.last().unwrap()
+        ));
+
         let mut room_constr = Expression::default();
         for r in &rooms[a] {
             if r.is_some() {
                 room_constr.add_mul(1.0, r.unwrap());
             }
         }
-        if allow_undistributed {
-            problem.add_constraint(constraint!(start_constr.clone() <= 1.0));
-            problem.add_constraint(constraint!(room_constr.clone() <= 1.0));
-        } else {
-            problem.add_constraint(constraint!(start_constr.clone() == 1.0));
-            problem.add_constraint(constraint!(room_constr.clone() == 1.0));
-        }
+        problem.add_constraint(constraint!(room_constr.clone() == 1.0));
 
         for b in (a + 1)..fractivity_entries.len() {
+            println!(
+                "preventing overlap between {:?} and {:?}",
+                fractivity_entries[a].0.id, fractivity_entries[b].0.id
+            );
+
+            // fractivity-order = 1 => b NACH a
+
+            problem.add_constraint(constraint!(
+                starts[a]
+                    + fractivity_order[index] * last_finish
+                    + (1 - any_overlap[index]) * last_finish
+                    >= starts[b]
+                        + fractivity_entries[b].0.duration
+                        + fractivity_entries[b].0.follow_up_time
+                        + fractivity_entries[a].0.preparation_time
+            ));
+            problem.add_constraint(constraint!(
+                starts[b]
+                    + (1 - fractivity_order[index]) * last_finish
+                    + (1 - any_overlap[index]) * last_finish
+                    >= starts[a]
+                        + fractivity_entries[a].0.duration
+                        + fractivity_entries[a].0.follow_up_time
+                        + fractivity_entries[b].0.preparation_time
+            ));
+
+            if fractivity_entries[a].0.blocker || fractivity_entries[b].0.blocker {
+                problem.add_constraint(constraint!(any_overlap[index] == 1));
+                index += 1;
+                continue;
+            }
+
             problem.add_constraint(constraint!(
                 2 * any_overlap[index] >= room_overlap[index] + instructor_overlap[index]
             ));
@@ -308,53 +391,46 @@ fn add_constraints(
                     ));
                 }
             }
-            for i in 0..all_instructors.len() {
-                let id = all_instructors[i];
-                let mut rhs = Expression::default();
-                if fractivity_entries[a]
-                    .0
-                    .instructor_extension_uuids
-                    .contains(&id)
-                {
-                    rhs.add_mul(1.0, 1.0);
-                } else if !allow_undistributed && v[a][i].is_some() {
-                    rhs.add_mul(1.0, v[a][i].unwrap());
-                }
+            let mut i_overlap = false;
+            for i1 in &fractivity_entries[a].0.instructor_extension_uuids {
                 if fractivity_entries[b]
                     .0
                     .instructor_extension_uuids
-                    .contains(&id)
+                    .contains(i1)
                 {
-                    rhs.add_mul(1.0, 1.0);
-                } else if !allow_undistributed && v[b][i].is_some() {
-                    rhs.add_mul(1.0, v[b][i].unwrap());
-                }
-                if rhs.clone().linear_coefficients().len() > 1 {
-                    problem.add_constraint(constraint!(instructor_overlap[index] + 1 >= rhs));
+                    problem.add_constraint(constraint!(instructor_overlap[index] == 1));
+                    i_overlap = true;
+                    break;
                 }
             }
-
-            for s1 in 0..num_starts {
-                let cur_start1 = first_start + TIME_RESOLUTION * s1;
-                if starts[a][s1 as usize].is_none() {
-                    continue;
-                }
-                for s2 in 0..num_starts {
-                    let cur_start2 = first_start + TIME_RESOLUTION * s2;
-                    if starts[b][s2 as usize].is_none()
-                        || !overlap(
-                            &fractivity_entries[a].0,
-                            cur_start1,
-                            &fractivity_entries[b].0,
-                            cur_start2,
-                        )
+            if !i_overlap {
+                for i in 0..all_instructors.len() {
+                    let id = all_instructors[i];
+                    let mut rhs = Expression::default();
+                    let mut any_visitor = false;
+                    if fractivity_entries[a]
+                        .0
+                        .instructor_extension_uuids
+                        .contains(&id)
                     {
-                        continue;
+                        rhs.add_mul(1.0, 1.0);
+                    } else if v[a][i].is_some() {
+                        any_visitor = true;
+                        rhs.add_mul(1.0, v[a][i].unwrap());
                     }
-                    problem.add_constraint(constraint!(
-                        starts[a][s1 as usize].unwrap() + starts[b][s2 as usize].unwrap()
-                            <= 2 - any_overlap[index]
-                    ));
+                    if fractivity_entries[b]
+                        .0
+                        .instructor_extension_uuids
+                        .contains(&id)
+                    {
+                        rhs.add_mul(1.0, 1.0);
+                    } else if v[b][i].is_some() {
+                        any_visitor = true;
+                        rhs.add_mul(1.0, v[b][i].unwrap());
+                    }
+                    if any_visitor {
+                        problem.add_constraint(constraint!(instructor_overlap[index] + 1 >= rhs));
+                    }
                 }
             }
 
@@ -363,229 +439,194 @@ fn add_constraints(
     }
 
     let max_parallel = fractivity_entries.len().min(all_rooms.len());
-    if !allow_undistributed {
-        for t in 0..num_starts {
-            let cur_time = first_start + TIME_RESOLUTION * t;
-            let mut constr = Expression::default();
-            for a in 0..fractivity_entries.len() {
-                for s in 0..num_starts {
-                    let cur_start = first_start + TIME_RESOLUTION * s;
-                    if !fractivity_entries[a].0.allowed_starts.contains(&cur_start) {
-                        continue;
-                    }
-                    if occupies(&fractivity_entries[a].0, cur_start, cur_time)
-                        && starts[a][s as usize].is_some()
-                    {
-                        constr.add_mul(1.0, starts[a][s as usize].unwrap());
-                    }
-                }
-            }
-            for k in 0..max_parallel {
-                problem.add_constraint(constraint!(
-                    constr.clone() <= b[t as usize][k] * max_parallel as f64 + (k as f64)
-                ));
-            }
+    for t in 0..num_time_steps {
+        let cur_time = first_start + time_resolution * t;
+        let mut constr = Expression::default();
+        for a in 0..fractivity_entries.len() {
+            problem.add_constraint(constraint!(
+                starts[a] <= cur_time + (1 - fractivity_occupies[t as usize][a]) * last_finish
+            ));
+            problem.add_constraint(constraint!(
+                starts[a]
+                    + fractivity_entries[a].0.duration
+                    + (1 - fractivity_occupies[t as usize][a]) * last_finish
+                    >= cur_time
+            ));
+
+            constr.add_mul(1.0, fractivity_occupies[t as usize][a]);
+        }
+        for k in 0..max_parallel {
+            problem.add_constraint(constraint!(
+                constr.clone() <= b[t as usize][k] * max_parallel as f64 + (k as f64)
+            ));
         }
     }
-}
-
-fn lp_distribution(
-    fractivity_entries: &Vec<(FractivityEntry, Option<(Uuid, i32)>)>,
-    all_rooms: &Vec<FractivityRoom>,
-    all_instructors: &Vec<Uuid>,
-    first_start: i32,
-    num_starts: i32,
-) -> Result<Result<Vec<(usize, Uuid, i32)>, Vec<FractivityEntry>>, String> {
-    let mut all_vars = variables!();
-    let mut max_distribution_obj = Expression::default();
-    let mut parallel_obj = Expression::default();
-    let (starts, rooms) = create_fractivity_variables(
-        fractivity_entries,
-        all_rooms,
-        first_start,
-        num_starts,
-        &mut all_vars,
-        &mut max_distribution_obj,
-        &mut parallel_obj,
-    );
-    let (instructor_overlap, room_overlap, any_overlap) =
-        create_fractivity_pair_variables(fractivity_entries, &mut all_vars);
-    let mut visitor_obj = Expression::default();
-    let v = create_visitor_variables(
-        fractivity_entries,
-        all_instructors,
-        &mut all_vars,
-        &mut visitor_obj,
-    );
-
-    let b = create_parallel_variables(
-        fractivity_entries,
-        all_rooms,
-        num_starts,
-        &mut all_vars,
-        &mut parallel_obj,
-    );
-    let mut problem = all_vars
-        .clone()
-        .maximise(max_distribution_obj)
-        .using(default_solver);
-    //.with_time_limit(1);
-
-    add_constraints(
-        fractivity_entries,
-        all_rooms,
-        all_instructors,
-        first_start,
-        num_starts,
-        &mut problem,
-        &starts,
-        &rooms,
-        &instructor_overlap,
-        &room_overlap,
-        &any_overlap,
-        &b,
-        &v,
-        true,
-    );
 
     match problem.solve() {
         Ok(solution) => {
-            println!("Found solution to initial LP");
+            println!("Found solution");
+            let mut result_distributed = Vec::new();
             let mut err_undistributed = Vec::new();
 
+            let mut index = 0;
             for a in 0..fractivity_entries.len() {
-                let mut dist = (false, false);
-                for s in 0..num_starts {
-                    if starts[a][s as usize].is_some()
-                        && solution.value(starts[a][s as usize].unwrap()) > 0.0
-                    {
-                        dist.0 = true;
-                        break;
+                for b in (a + 1)..fractivity_entries.len() {
+                    if solution.value(any_overlap[index]) == 0.0 {
+                        index += 1;
+                        continue;
                     }
+
+                    println!(
+                        "Variables for overlap between {:?} and {:?}",
+                        fractivity_entries[a].0.id, fractivity_entries[b].0.id
+                    );
+
+                    println!(
+                        "Room overlap: {:?} instructor overlap: {:?} any overlap: {:?} order: {:?}",
+                        solution.value(room_overlap[index]),
+                        solution.value(instructor_overlap[index]),
+                        solution.value(any_overlap[index]),
+                        solution.value(fractivity_order[index])
+                    );
+                    index += 1;
                 }
+            }
+
+            for a in 0..fractivity_entries.len() {
+                let mut room_dist = None;
                 for r in 0..all_rooms.len() {
                     if rooms[a][r].is_some() && solution.value(rooms[a][r].unwrap()) > 0.0 {
-                        dist.1 = true;
+                        room_dist = Some(all_rooms[r].id);
                         break;
                     }
                 }
-                if !dist.0 || !dist.1 {
+                if room_dist.is_none() {
                     err_undistributed.push(fractivity_entries[a].0.clone());
+                } else {
+                    result_distributed.push((
+                        a,
+                        room_dist.unwrap(),
+                        (solution.value(starts[a]) / time_resolution as f64).round() as i32
+                            * time_resolution,
+                    ));
                 }
             }
-
-            if !err_undistributed.is_empty() {
-                Ok(Err(err_undistributed))
+            if err_undistributed.is_empty() {
+                Ok(Ok(result_distributed))
             } else {
-                problem = match all_vars
-                    .clone()
-                    .maximise(visitor_obj.clone())
-                    .using(default_solver)
-                    .with_mip_gap(0.5)
-                {
-                    Ok(o) => o,
-                    Err(e) => return Err(e.to_string()),
-                };
-                add_constraints(
-                    fractivity_entries,
-                    all_rooms,
-                    all_instructors,
-                    first_start,
-                    num_starts,
-                    &mut problem,
-                    &starts,
-                    &rooms,
-                    &instructor_overlap,
-                    &room_overlap,
-                    &any_overlap,
-                    &b,
-                    &v,
-                    false,
-                );
-
-                match problem.solve() {
-                    Ok(solution1) => {
-                        problem = all_vars
-                            .maximise(parallel_obj)
-                            .using(default_solver)
-                            .with_time_limit(1)
-                            .with_mip_gap(0.5)
-                            .unwrap();
-                        add_constraints(
-                            fractivity_entries,
-                            all_rooms,
-                            all_instructors,
-                            first_start,
-                            num_starts,
-                            &mut problem,
-                            &starts,
-                            &rooms,
-                            &instructor_overlap,
-                            &room_overlap,
-                            &any_overlap,
-                            &b,
-                            &v,
-                            false,
-                        );
-                        let mut visitor_sum = Expression::default();
-                        for v1 in v {
-                            for v2 in v1 {
-                                if v2.is_some() {
-                                    visitor_sum.add_mul(1.0, v2.unwrap());
-                                }
-                            }
-                        }
-                        problem.add_constraint(constraint!(
-                            visitor_sum >= solution1.eval(visitor_obj)
-                        ));
-
-                        match problem.solve() {
-                            Ok(solution2) => {
-                                let mut result_distributed = Vec::new();
-                                let mut err_undistributed = Vec::new();
-
-                                for a in 0..fractivity_entries.len() {
-                                    let mut dist = (None, None);
-                                    for s in 0..num_starts {
-                                        let cur_start = first_start + TIME_RESOLUTION * s;
-                                        if starts[a][s as usize].is_some()
-                                            && solution2.value(starts[a][s as usize].unwrap()) > 0.0
-                                        {
-                                            dist.0 = Some(cur_start);
-                                            break;
-                                        }
-                                    }
-                                    for r in 0..all_rooms.len() {
-                                        if rooms[a][r].is_some()
-                                            && solution2.value(rooms[a][r].unwrap()) > 0.0
-                                        {
-                                            dist.1 = Some(all_rooms[r].id);
-                                            break;
-                                        }
-                                    }
-                                    if dist.0.is_none() || dist.1.is_none() {
-                                        err_undistributed.push(fractivity_entries[a].0.clone());
-                                    } else {
-                                        result_distributed.push((
-                                            a,
-                                            dist.1.unwrap(),
-                                            dist.0.unwrap(),
-                                        ));
-                                    }
-                                }
-                                if err_undistributed.is_empty() {
-                                    Ok(Ok(result_distributed))
-                                } else {
-                                    Ok(Err(err_undistributed))
-                                }
-                            }
-                            Err(e) => Err(e.to_string()),
-                        }
-                    }
-                    Err(e) => Err(e.to_string()),
-                }
+                Ok(Err(err_undistributed))
             }
         }
-        Err(e) => Err(e.to_string()),
+
+        Err(_) => {
+            println!("Could not find a fast solution");
+            let mut all_vars = variables!();
+            let mut objective = Expression::default();
+            let (starts, rooms, distributed) = create_fractivity_variables(
+                fractivity_entries,
+                all_rooms,
+                all_instructors.len(),
+                &mut all_vars,
+                &mut Expression::default(),
+                &mut objective,
+            );
+            let (instructor_overlap, room_overlap, any_overlap, fractivity_order) =
+                create_fractivity_pair_variables(fractivity_entries, &mut all_vars);
+            let mut problem = all_vars.clone().maximise(objective).using(default_solver);
+            //.with_time_limit(1);
+
+            let mut index = 0;
+            // Distribute max once and only in legal rooms and starts
+            for a in 0..fractivity_entries.len() {
+                problem.add_constraint(constraint!(
+                    starts[a] >= fractivity_entries[a].0.allowed_starts[0]
+                ));
+                problem.add_constraint(constraint!(
+                    starts[a] <= *fractivity_entries[a].0.allowed_starts.last().unwrap()
+                ));
+
+                let mut room_constr = Expression::default();
+                for r in &rooms[a] {
+                    if r.is_some() {
+                        room_constr.add_mul(1.0, r.unwrap());
+                    }
+                }
+                problem.add_constraint(constraint!(room_constr.clone() == 1.0));
+
+                for b in (a + 1)..fractivity_entries.len() {
+                    // fractivity-order = 1 => b NACH a
+
+                    problem.add_constraint(constraint!(
+                        starts[a]
+                            + fractivity_order[index] * last_finish
+                            + (1 - any_overlap[index]) * last_finish
+                            >= starts[b]
+                                + fractivity_entries[b].0.duration
+                                + fractivity_entries[b].0.follow_up_time
+                                + fractivity_entries[a].0.preparation_time
+                    ));
+                    problem.add_constraint(constraint!(
+                        starts[b]
+                            + (1 - fractivity_order[index]) * last_finish
+                            + (1 - any_overlap[index]) * last_finish
+                            >= starts[a]
+                                + fractivity_entries[a].0.duration
+                                + fractivity_entries[a].0.follow_up_time
+                                + fractivity_entries[b].0.preparation_time
+                    ));
+
+                    if fractivity_entries[a].0.blocker || fractivity_entries[b].0.blocker {
+                        problem.add_constraint(constraint!(any_overlap[index] + (1 - distributed[a]) + (1 - distributed[b]) >= 1));
+                        index += 1;
+                        continue;
+                    }
+
+                    problem.add_constraint(constraint!(
+                        2 * (any_overlap[index] + (1 - distributed[a]) + (1 - distributed[b]))
+                            >= room_overlap[index] + instructor_overlap[index]
+                    ));
+
+                    for r in 0..all_rooms.len() {
+                        if rooms[a][r].is_some() && rooms[b][r].is_some() {
+                            problem.add_constraint(constraint!(
+                                room_overlap[index] + 1
+                                    >= rooms[a][r].unwrap() + rooms[b][r].unwrap()
+                            ));
+                        }
+                    }
+                    for i1 in &fractivity_entries[a].0.instructor_extension_uuids {
+                        if fractivity_entries[b]
+                            .0
+                            .instructor_extension_uuids
+                            .contains(i1)
+                        {
+                            problem.add_constraint(constraint!(instructor_overlap[index] == 1));
+                            break;
+                        }
+                    }
+
+                    index += 1;
+                }
+            }
+
+            match problem.solve() {
+                Ok(solution) => {
+                    let mut err_undistributed = Vec::new();
+
+                    for a in 0..fractivity_entries.len() {
+                        if solution.value(distributed[a]).round() == 0.0 {
+                            err_undistributed.push(fractivity_entries[a].0.clone())
+                        }
+                    }
+
+                    if !err_undistributed.is_empty() {
+                        Ok(Err(err_undistributed))
+                    } else {
+                        Err("Suddenly distributable".to_string())
+                    }
+                }
+                Err(e) => Err(e.to_string()),
+            }
+        }
     }
 }

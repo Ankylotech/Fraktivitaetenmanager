@@ -6,6 +6,10 @@ use rand_distr::{num_traits::ToPrimitive, Distribution, Normal};
 use uuid::Uuid;
 use Fraktivitaeten::{distribute, FractivityEntry, FractivityRoom};
 
+use crate::distribution_checks::checks::{self, check_distribution};
+
+mod distribution_checks;
+
 #[cfg(test)]
 pub mod tests {
     use chrono::NaiveDate;
@@ -34,6 +38,7 @@ pub mod tests {
                     preparation_time: 0,
                     follow_up_time: 0,
                     start_day: NaiveDate::from_epoch_days(0).unwrap(),
+                    blocker: false,
                 },
                 None,
             ),
@@ -49,6 +54,7 @@ pub mod tests {
                     preparation_time: 0,
                     follow_up_time: 0,
                     start_day: NaiveDate::from_epoch_days(0).unwrap(),
+                    blocker: false,
                 },
                 None,
             ),
@@ -74,6 +80,7 @@ pub mod tests {
                     preparation_time: 0,
                     follow_up_time: 0,
                     start_day: NaiveDate::from_epoch_days(0).unwrap(),
+                    blocker: false,
                 },
                 None,
             ),
@@ -89,6 +96,7 @@ pub mod tests {
                     preparation_time: 5,
                     follow_up_time: 0,
                     start_day: NaiveDate::from_epoch_days(0).unwrap(),
+                    blocker: false,
                 },
                 None,
             ),
@@ -104,6 +112,7 @@ pub mod tests {
                     preparation_time: 5,
                     follow_up_time: 0,
                     start_day: NaiveDate::from_epoch_days(0).unwrap(),
+                    blocker: false,
                 },
                 None,
             ),
@@ -119,6 +128,7 @@ pub mod tests {
                     preparation_time: 5,
                     follow_up_time: 0,
                     start_day: NaiveDate::from_epoch_days(0).unwrap(),
+                    blocker: false,
                 },
                 None,
             ),
@@ -167,14 +177,14 @@ fn generate_random_duration() -> i32 {
     while v < min_frac_duration {
         v = normal.sample(&mut rng);
     }
-    v.to_i32().unwrap()
+    (v / 5.0).to_i32().unwrap() * 5
 }
 
 fn generate_random_starts(start: i32) -> Vec<i32> {
     let mut rng = rand::rng();
     let amount = rng.random_range(45..120);
 
-    ((start)..(start + amount)).collect()
+    ((start)..(start + amount)).step_by(15).collect()
 }
 
 fn generate_random_fractivity_entries(
@@ -219,6 +229,7 @@ fn generate_random_fractivity_entries(
                     preparation_time: 5,
                     follow_up_time: 0,
                     start_day: NaiveDate::from_epoch_days(0).unwrap(),
+                    blocker: false,
                 },
                 None,
             ));
@@ -250,12 +261,24 @@ fn measure_single_distribution() -> (Duration, bool) {
     use std::time::Instant;
     let now = Instant::now();
 
-    let res = distribute(&entries, rooms).unwrap();
+    let res = distribute(&entries, rooms.clone()).unwrap();
+
+    let time = now.elapsed();
+    let reference = checks::reference_distribution(&entries, rooms).unwrap();
+
     if res.is_err() {
         assert!(!res.clone().unwrap_err().is_empty());
+        if reference.is_err() {
+            assert!(res.clone().unwrap_err().len() <= reference.clone().unwrap_err().len());
+        } else {
+            assert!(!check_distribution(&reference.clone().unwrap()));
+        }
+    } else {
+        assert!(checks::check_distribution(&res.clone().unwrap()));
+        //assert!(reference.is_ok());
     }
 
-    (now.elapsed(), res.is_ok())
+    (time, res.is_ok())
 }
 
 pub fn main() {
