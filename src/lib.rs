@@ -1,4 +1,3 @@
-use core::time;
 use std::{
     cmp::{max, min},
     collections::HashSet,
@@ -10,11 +9,17 @@ use chrono::NaiveDate;
 use uuid::Uuid;
 
 use good_lp::{
-    constraint, default_solver, variable, variables, Expression, IntoAffineExpression,
-    ProblemVariables, Solution, SolverModel, Variable, WithMipGap,
+    constraint, default_solver, variable, variables, Expression,
+    ProblemVariables, Solution, SolverModel, Variable, 
 };
 
 use gcd::Gcd;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FractivityDistributionFailReason {
+    InstructorUnavailable(Vec<Uuid>),
+    RoomUnavailable,
+}
 
 // Fields that should not matter are intentionally removed
 #[derive(Clone, Debug)]
@@ -49,7 +54,13 @@ fn overlap(a1: &FractivityEntry, s1: i32, a2: &FractivityEntry, s2: i32) -> bool
 pub fn distribute(
     fractivity_entries: &Vec<(FractivityEntry, Option<(Uuid, i32)>)>,
     all_rooms: Vec<FractivityRoom>,
-) -> Result<Result<Vec<(FractivityEntry, Uuid, i32)>, Vec<FractivityEntry>>, String> {
+) -> Result<
+    Result<
+        Vec<(FractivityEntry, Uuid, i32)>,
+        Vec<(FractivityEntry, FractivityDistributionFailReason)>,
+    >,
+    String,
+> {
     let mut instructors_aggregator = HashSet::new();
     let mut rooms_aggregator = HashSet::new();
     let mut first_start = i32::MAX;
@@ -70,7 +81,10 @@ pub fn distribute(
             entry.0.follow_up_time
         );
         if entry.0.allowed_rooms.is_empty() || entry.0.allowed_starts.is_empty() {
-            return Ok(Err(vec![entry.0.clone()]));
+            return Ok(Err(vec![(
+                entry.0.clone(),
+                FractivityDistributionFailReason::RoomUnavailable,
+            )]));
         }
         for room in &entry.0.allowed_rooms {
             rooms_aggregator.insert(room.clone());
@@ -164,11 +178,12 @@ fn create_fractivity_variables(
         let d = all_vars.add(variable().binary());
         distributed.push(d);
         objective.add_mul(
-                *previous_scores
-                    + ( fractivity_entries.len() * num_instructors + a.0.instructor_extension_uuids.len()) as f64,
-                d,
-            );
-        
+            *previous_scores
+                + (fractivity_entries.len() * num_instructors
+                    + a.0.instructor_extension_uuids.len()) as f64,
+            d,
+        );
+
         let mut room = Vec::new();
         for r in all_rooms {
             let mut res = None;
@@ -224,7 +239,7 @@ fn create_fractivity_pair_variables(
     )
 }
 
-fn create_visitor_variables(
+fn create_instructor_variables(
     fractivity_entries: &Vec<(FractivityEntry, Option<(Uuid, i32)>)>,
     all_instructors: &Vec<Uuid>,
     all_vars: &mut ProblemVariables,
@@ -233,18 +248,32 @@ fn create_visitor_variables(
 ) -> Vec<Vec<Option<Variable>>> {
     let mut v = Vec::new();
 
-    let mut visitor_scores = 0.0;
+    let mut instructor_scores = 0.0;
     for a in 0..fractivity_entries.len() {
         let mut va = Vec::new();
         for i in all_instructors {
             let mut res = None;
-            if fractivity_entries[a].0.visitor_extension_uuids.contains(&i) {
+            if fractivity_entries[a]
+                .0
+                .instructor_extension_uuids
+                .contains(&i)
+            {
+                let var = all_vars.add(variable().binary());
+                println!(
+                    "adding instructor variable for fractivity {:?} visitor {:?} ",
+                    fractivity_entries[a].0.topic, i
+                );
+                let score = (all_instructors.len() * fractivity_entries.len()) as f64;
+                instructor_scores += *previous_scores + score;
+                objective.add_mul(*previous_scores + score, var);
+                res = Some(var);
+            } else if fractivity_entries[a].0.visitor_extension_uuids.contains(&i) {
                 let var = all_vars.add(variable().binary());
                 println!(
                     "adding visitor variable for fractivity {:?} visitor {:?} ",
                     fractivity_entries[a].0.topic, i
                 );
-                visitor_scores += *previous_scores;
+                instructor_scores += *previous_scores;
                 objective.add_mul(*previous_scores, var);
                 res = Some(var);
             }
@@ -253,7 +282,7 @@ fn create_visitor_variables(
         }
         v.push(va);
     }
-    *previous_scores += visitor_scores;
+    *previous_scores += instructor_scores;
     v
 }
 
@@ -302,7 +331,10 @@ fn lp_distribution(
     last_start: i32,
     last_finish: i32,
     time_resolution: i32,
-) -> Result<Result<Vec<(usize, Uuid, i32)>, Vec<FractivityEntry>>, String> {
+) -> Result<
+    Result<Vec<(usize, Uuid, i32)>, Vec<(FractivityEntry, FractivityDistributionFailReason)>>,
+    String,
+> {
     let mut all_vars = variables!();
     let mut objective = Expression::default();
     let num_time_steps = (last_finish - first_start) / time_resolution;
@@ -315,7 +347,7 @@ fn lp_distribution(
         &mut objective,
         &mut previous_scores,
     );
-    let v = create_visitor_variables(
+    let v = create_instructor_variables(
         fractivity_entries,
         all_instructors,
         &mut all_vars,
@@ -401,46 +433,21 @@ fn lp_distribution(
                     ));
                 }
             }
-            let mut i_overlap = false;
-            for i1 in &fractivity_entries[a].0.instructor_extension_uuids {
-                if fractivity_entries[b]
-                    .0
-                    .instructor_extension_uuids
-                    .contains(i1)
-                {
-                    problem.add_constraint(constraint!(instructor_overlap[index] == 1));
-                    i_overlap = true;
-                    break;
+
+            for i in 0..all_instructors.len() {
+                let id = all_instructors[i];
+                let mut rhs = Expression::default();
+                let mut any_visitor = false;
+                if v[a][i].is_some() {
+                    any_visitor = true;
+                    rhs.add_mul(1.0, v[a][i].unwrap());
                 }
-            }
-            if !i_overlap {
-                for i in 0..all_instructors.len() {
-                    let id = all_instructors[i];
-                    let mut rhs = Expression::default();
-                    let mut any_visitor = false;
-                    if fractivity_entries[a]
-                        .0
-                        .instructor_extension_uuids
-                        .contains(&id)
-                    {
-                        rhs.add_mul(1.0, 1.0);
-                    } else if v[a][i].is_some() {
-                        any_visitor = true;
-                        rhs.add_mul(1.0, v[a][i].unwrap());
-                    }
-                    if fractivity_entries[b]
-                        .0
-                        .instructor_extension_uuids
-                        .contains(&id)
-                    {
-                        rhs.add_mul(1.0, 1.0);
-                    } else if v[b][i].is_some() {
-                        any_visitor = true;
-                        rhs.add_mul(1.0, v[b][i].unwrap());
-                    }
-                    if any_visitor {
-                        problem.add_constraint(constraint!(instructor_overlap[index] + 1 >= rhs));
-                    }
+                if v[b][i].is_some() {
+                    any_visitor = true;
+                    rhs.add_mul(1.0, v[b][i].unwrap());
+                }
+                if any_visitor {
+                    problem.add_constraint(constraint!(instructor_overlap[index] + 1 >= rhs));
                 }
             }
 
@@ -480,7 +487,11 @@ fn lp_distribution(
 
             let mut index = 0;
             for a in 0..fractivity_entries.len() {
-                println!("Fractivity {:?} distributed: {:?}", fractivity_entries[a].0.id, solution.value(distributed[a]));
+                println!(
+                    "Fractivity {:?} distributed: {:?}",
+                    fractivity_entries[a].0.id,
+                    solution.value(distributed[a])
+                );
                 for b in (a + 1)..fractivity_entries.len() {
                     if solution.value(any_overlap[index]) == 0.0 {
                         index += 1;
@@ -511,8 +522,29 @@ fn lp_distribution(
                         break;
                     }
                 }
-                if room_dist.is_none() || solution.value(distributed[a]).round() == 0.0{
-                    err_undistributed.push(fractivity_entries[a].0.clone());
+                let mut undistributed_instructors = Vec::new();
+                for i in 0..all_instructors.len() {
+                    if fractivity_entries[a]
+                        .0
+                        .instructor_extension_uuids
+                        .contains(&all_instructors[i])
+                        && solution.value(v[a][i].unwrap()).round() == 0.0
+                    {
+                        undistributed_instructors.push(all_instructors[i]);
+                    }
+                }
+                if room_dist.is_none() || solution.value(distributed[a]).round() == 0.0 {
+                    err_undistributed.push((
+                        fractivity_entries[a].0.clone(),
+                        FractivityDistributionFailReason::RoomUnavailable,
+                    ));
+                } else if !undistributed_instructors.is_empty() {
+                    err_undistributed.push((
+                        fractivity_entries[a].0.clone(),
+                        FractivityDistributionFailReason::InstructorUnavailable(
+                            undistributed_instructors,
+                        ),
+                    ));
                 } else {
                     result_distributed.push((
                         a,

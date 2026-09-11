@@ -4,7 +4,11 @@ use chrono::NaiveDate;
 use rand::{seq, RngExt};
 use rand_distr::{num_traits::ToPrimitive, Distribution, Normal};
 use uuid::Uuid;
-use Fraktivitaeten::{distribute, FractivityEntry, FractivityRoom};
+use Fraktivitaeten::{
+    distribute,
+    FractivityDistributionFailReason::{self, RoomUnavailable},
+    FractivityEntry, FractivityRoom,
+};
 
 use crate::distribution_checks::checks::{self, check_distribution};
 
@@ -268,9 +272,41 @@ fn measure_single_distribution() -> (Duration, bool) {
 
     if res.is_err() {
         assert!(!res.clone().unwrap_err().is_empty());
-        let filtered_entries: Vec<(FractivityEntry, Option<(Uuid, i32)>)> = entries.clone().into_iter().filter(|(e, _)| !res.clone().unwrap_err().iter().any(|f| f.id  == e.id) ).collect();
+        let filtered_entries: Vec<(FractivityEntry, Option<(Uuid, i32)>)> = entries
+            .clone()
+            .into_iter()
+            .filter(|(e, _)| !res.clone().unwrap_err().iter().any(|(f, _)| f.id == e.id))
+            .collect();
         let filtered_res = distribute(&filtered_entries, rooms.clone()).unwrap();
         assert!(filtered_res.is_ok() && check_distribution(&filtered_res.unwrap()));
+        let mapped_entries: Vec<(FractivityEntry, Option<(Uuid, i32)>)> = entries
+            .clone()
+            .iter_mut()
+            .filter(|(e, _)| {
+                !res.clone()
+                    .unwrap_err()
+                    .iter()
+                    .any(|(f, r)| f.id == e.id && r == &RoomUnavailable)
+            })
+            .enumerate()
+            .map(|(i, (f, e))| {
+                let binding = res.clone().unwrap_err();
+                let bad_instructors = match binding.iter().find(|(f2, _)| f2.id == f.id) {
+                    Some((_, FractivityDistributionFailReason::InstructorUnavailable(v))) => v,
+                    Some((_, FractivityDistributionFailReason::RoomUnavailable)) => unreachable!(),
+                    None => &Vec::new(),
+                };
+                f.instructor_extension_uuids = f
+                    .instructor_extension_uuids
+                    .clone()
+                    .into_iter()
+                    .filter(|i| !bad_instructors.contains(i))
+                    .collect();
+                (f.clone(), e.clone())
+            })
+            .collect();
+        let mapped_res = distribute(&mapped_entries, rooms.clone()).unwrap();
+        assert!(mapped_res.is_ok() && check_distribution(&mapped_res.unwrap()));
     } else {
         assert!(checks::check_distribution(&res.clone().unwrap()));
         //assert!(reference.is_ok());
@@ -280,7 +316,7 @@ fn measure_single_distribution() -> (Duration, bool) {
 }
 
 pub fn main() {
-    let num_sucesses = 100;
+    let num_sucesses = 1000;
     let mut tries = 0;
     let mut total_duration = 0;
     let mut total_success_duration = 0;
