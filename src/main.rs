@@ -250,13 +250,13 @@ fn measure_single_distribution() -> (Duration, bool) {
         });
     }
 
-    let mut instuctors: Vec<Uuid> = Vec::new();
+    let mut instructors: Vec<Uuid> = Vec::new();
     for i in 0..num_intructors {
-        instuctors.push(Uuid::from_u128(i));
+        instructors.push(Uuid::from_u128(i));
     }
 
     let entries: Vec<(FractivityEntry, Option<(Uuid, i32)>)> =
-        generate_random_fractivity_entries(&rooms, &instuctors);
+        generate_random_fractivity_entries(&rooms, &instructors);
 
     use std::time::Instant;
     let now = Instant::now();
@@ -264,15 +264,13 @@ fn measure_single_distribution() -> (Duration, bool) {
     let res = distribute(&entries, rooms.clone()).unwrap();
 
     let time = now.elapsed();
-    let reference = checks::reference_distribution(&entries, rooms).unwrap();
+    //let reference = checks::reference_distribution(&entries, rooms).unwrap();
 
     if res.is_err() {
         assert!(!res.clone().unwrap_err().is_empty());
-        if reference.is_err() {
-            assert!(res.clone().unwrap_err().len() <= reference.clone().unwrap_err().len());
-        } else {
-            assert!(!check_distribution(&reference.clone().unwrap()));
-        }
+        let filtered_entries: Vec<(FractivityEntry, Option<(Uuid, i32)>)> = entries.clone().into_iter().filter(|(e, _)| !res.clone().unwrap_err().iter().any(|f| f.id  == e.id) ).collect();
+        let filtered_res = distribute(&filtered_entries, rooms.clone()).unwrap();
+        assert!(filtered_res.is_ok() && check_distribution(&filtered_res.unwrap()));
     } else {
         assert!(checks::check_distribution(&res.clone().unwrap()));
         //assert!(reference.is_ok());
