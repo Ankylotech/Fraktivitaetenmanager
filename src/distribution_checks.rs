@@ -1,6 +1,6 @@
 pub mod checks {
     use good_lp::{
-        constraint, default_solver, variable, variables, Expression, ObjectiveDirection,
+        constraint, solvers::highs, variable, variables, Expression, ObjectiveDirection,
         ProblemVariables, Solution, SolverModel, Variable, WithMipGap,
     };
 
@@ -212,7 +212,7 @@ pub mod checks {
 
         let mut problem = match all_vars
             .optimise(ObjectiveDirection::Maximisation, obj)
-            .using(default_solver)
+            .using(highs::highs)
             //.with_time_limit(1)
             .with_mip_gap(
                 0.5 / (fractivity_entries.len() * fractivity_entries.len() * all_instructors.len())
@@ -221,7 +221,7 @@ pub mod checks {
             Ok(o) => o,
             Err(e) => return Err(e.to_string()),
         };
-        problem.set_parameter("log", "0");
+        //problem.set_parameter("log", "0");
 
         // Distribute max once and only in legal rooms and starts
         for a in 0..fractivity_entries.len() {

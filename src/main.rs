@@ -245,12 +245,13 @@ fn generate_random_fractivity_entries(
 fn measure_single_distribution() -> (Duration, bool) {
     let num_rooms = 22;
     let num_intructors = 20;
+    let mut rng = rand::rng();
 
     let mut rooms: Vec<FractivityRoom> = Vec::new();
     for i in 0..num_rooms {
         rooms.push(FractivityRoom {
             id: Uuid::from_u128(i),
-            priority: 0,
+            priority: rng.random_range(-2..=2),
         });
     }
 
@@ -268,9 +269,10 @@ fn measure_single_distribution() -> (Duration, bool) {
     let res = distribute(&entries, rooms.clone()).unwrap();
 
     let time = now.elapsed();
-    //let reference = checks::reference_distribution(&entries, rooms).unwrap();
 
     if res.is_err() {
+        let reference = checks::reference_distribution(&entries, rooms.clone()).unwrap();
+        assert!(reference.is_err() || !check_distribution(&reference.unwrap()));
         assert!(!res.clone().unwrap_err().is_empty());
         let filtered_entries: Vec<(FractivityEntry, Option<(Uuid, i32)>)> = entries
             .clone()
@@ -288,8 +290,7 @@ fn measure_single_distribution() -> (Duration, bool) {
                     .iter()
                     .any(|(f, r)| f.id == e.id && r == &RoomUnavailable)
             })
-            .enumerate()
-            .map(|(i, (f, e))| {
+            .map(| (f, e)| {
                 let binding = res.clone().unwrap_err();
                 let bad_instructors = match binding.iter().find(|(f2, _)| f2.id == f.id) {
                     Some((_, FractivityDistributionFailReason::InstructorUnavailable(v))) => v,
