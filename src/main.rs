@@ -1,6 +1,5 @@
 use std::time::Duration;
 
-use chrono::NaiveDate;
 use rand::{seq, RngExt};
 use rand_distr::{num_traits::ToPrimitive, Distribution, Normal};
 use uuid::Uuid;
@@ -16,7 +15,6 @@ mod distribution_checks;
 
 #[cfg(test)]
 pub mod tests {
-    use chrono::NaiveDate;
     use uuid::Uuid;
     use Fraktivitaeten::{distribute, FractivityEntry, FractivityRoom};
 
@@ -41,7 +39,6 @@ pub mod tests {
                     allowed_starts: vec![810, 825, 840, 855, 870],
                     preparation_time: 0,
                     follow_up_time: 0,
-                    start_day: NaiveDate::from_epoch_days(0).unwrap(),
                     blocker: false,
                 },
                 None,
@@ -57,7 +54,6 @@ pub mod tests {
                     allowed_starts: vec![810],
                     preparation_time: 0,
                     follow_up_time: 0,
-                    start_day: NaiveDate::from_epoch_days(0).unwrap(),
                     blocker: false,
                 },
                 None,
@@ -83,7 +79,6 @@ pub mod tests {
                     allowed_starts: vec![0],
                     preparation_time: 0,
                     follow_up_time: 0,
-                    start_day: NaiveDate::from_epoch_days(0).unwrap(),
                     blocker: false,
                 },
                 None,
@@ -99,7 +94,6 @@ pub mod tests {
                     allowed_starts: vec![0, 15, 30, 45],
                     preparation_time: 5,
                     follow_up_time: 0,
-                    start_day: NaiveDate::from_epoch_days(0).unwrap(),
                     blocker: false,
                 },
                 None,
@@ -115,7 +109,6 @@ pub mod tests {
                     allowed_starts: vec![0, 15, 30, 45],
                     preparation_time: 5,
                     follow_up_time: 0,
-                    start_day: NaiveDate::from_epoch_days(0).unwrap(),
                     blocker: false,
                 },
                 None,
@@ -131,7 +124,6 @@ pub mod tests {
                     allowed_starts: vec![0, 15, 30, 45],
                     preparation_time: 5,
                     follow_up_time: 0,
-                    start_day: NaiveDate::from_epoch_days(0).unwrap(),
                     blocker: false,
                 },
                 None,
@@ -232,7 +224,6 @@ fn generate_random_fractivity_entries(
                     allowed_starts: generate_random_starts(i),
                     preparation_time: 5,
                     follow_up_time: 0,
-                    start_day: NaiveDate::from_epoch_days(0).unwrap(),
                     blocker: false,
                 },
                 None,
@@ -242,7 +233,7 @@ fn generate_random_fractivity_entries(
     result
 }
 
-fn measure_single_distribution() -> (Duration, bool) {
+fn measure_single_distribution() -> (Duration, bool, f64) {
     let num_rooms = 22;
     let num_intructors = 20;
     let mut rng = rand::rng();
@@ -270,9 +261,14 @@ fn measure_single_distribution() -> (Duration, bool) {
 
     let time = now.elapsed();
 
+    let ref_now = Instant::now();
+
+    let ref_res = checks::reference_distribution(&entries, rooms.clone()).unwrap();
+
+    let ref_time = ref_now.elapsed();
+
     if res.is_err() {
-        let reference = checks::reference_distribution(&entries, rooms.clone()).unwrap();
-        assert!(reference.is_err() || !check_distribution(&reference.unwrap()));
+        assert!(ref_res.is_err() || !check_distribution(&ref_res.unwrap()));
         assert!(!res.clone().unwrap_err().is_empty());
         let filtered_entries: Vec<(FractivityEntry, Option<(Uuid, i32)>)> = entries
             .clone()
@@ -290,11 +286,12 @@ fn measure_single_distribution() -> (Duration, bool) {
                     .iter()
                     .any(|(f, r)| f.id == e.id && r == &RoomUnavailable)
             })
-            .map(| (f, e)| {
+            .map(|(f, e)| {
                 let binding = res.clone().unwrap_err();
                 let bad_instructors = match binding.iter().find(|(f2, _)| f2.id == f.id) {
                     Some((_, FractivityDistributionFailReason::InstructorUnavailable(v))) => v,
                     Some((_, FractivityDistributionFailReason::RoomUnavailable)) => unreachable!(),
+                    Some((_, FractivityDistributionFailReason::NoRoomsOrStarts)) => unreachable!(),
                     None => &Vec::new(),
                 };
                 f.instructor_extension_uuids = f
@@ -313,38 +310,46 @@ fn measure_single_distribution() -> (Duration, bool) {
         //assert!(reference.is_ok());
     }
 
-    (time, res.is_ok())
+    (time, res.is_ok(), (ref_time.as_micros() as f64 / time.as_micros() as f64 - 1.0))
 }
 
 pub fn main() {
-    let num_sucesses = 1000;
+    let num_sucesses = 100000;
     let mut tries = 0;
     let mut total_duration = 0;
     let mut total_success_duration = 0;
     let mut total_successes = 0;
     let mut max_success = 0;
     let mut max_fail = 0;
+    let mut total_improvement_factor = 0.0;
+    let mut min_improvement = f64::MAX;
     while total_successes < num_sucesses {
         let dist_time = measure_single_distribution();
         total_duration += dist_time.0.as_millis();
+        total_improvement_factor += dist_time.2;
         if dist_time.1 && dist_time.0.as_millis() > max_success {
             max_success = dist_time.0.as_millis();
         }
         if !dist_time.1 && dist_time.0.as_millis() > max_fail {
             max_fail = dist_time.0.as_millis();
         }
+        if dist_time.2 < min_improvement {
+            min_improvement = dist_time.2;
+        }
         total_successes += if dist_time.1 { 1 } else { 0 };
         tries += 1;
         if dist_time.1 {
             total_success_duration += dist_time.0.as_millis();
         }
-        std::fs::write("test.txt", format!("{:?}: Average execution: {:?}ms, max successful distribution: {:?}ms with a total of {:?} successful distributions ({:?}%) taking {:?}ms on average, unsuccessful average: {:?}ms, max: {:?}ms",
+        std::fs::write("test.txt", format!("{:?}: Average execution: {:?}ms, average improvement: {:.2}%, min improvement: {:.2}% successes: {:?}({:?}%)\n successful:   average: {:?}ms,  max: {:?}ms \n unsuccessful: average: {:?}ms, max: {:?}ms",
                 tries,
                 total_duration / (tries ),
-                max_success,
+                total_improvement_factor / (tries as f64) * 100.0,
+                min_improvement * 100.0,
                 total_successes,
                 (total_successes * 100) / (tries ),
                 if total_successes > 0 {total_success_duration / total_successes} else {0},
+                max_success,
                 if (tries - total_successes) > 0 {(total_duration - total_success_duration) / (tries - total_successes)} else {0},
             max_fail)
             ).expect("Should be able to write to `/foo/tmp`");
